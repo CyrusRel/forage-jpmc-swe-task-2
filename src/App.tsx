@@ -3,63 +3,82 @@ import DataStreamer, { ServerRespond } from './DataStreamer';
 import Graph from './Graph';
 import './App.css';
 
-/**
- * State declaration for <App />
- */
+// Defines the shape of an object
+// Must have a single property named data, must be an array of 'serverRespond'
 interface IState {
   data: ServerRespond[],
+  showGraph: boolean,
 }
 
-/**
- * The parent element of the react app.
- * It renders title, button and Graph react element.
- */
 class App extends Component<{}, IState> {
+  intervalID?: number;
+
   constructor(props: {}) {
     super(props);
-
     this.state = {
-      // data saves the server responds.
-      // We use this state to parse data down to the child element (Graph) as element property
       data: [],
+      showGraph: false,
     };
   }
 
-  /**
-   * Render Graph react component with state.data parse as property data
-   */
   renderGraph() {
-    return (<Graph data={this.state.data}/>)
+    if (this.state.showGraph) {
+      return (<Graph data={this.state.data}/>);
+    }
   }
 
-  /**
-   * Get new data from server and update the state with the new data
-   */
   getDataFromServer() {
-    DataStreamer.getData((serverResponds: ServerRespond[]) => {
-      // Update the state by creating a new array of data that consists of
-      // Previous data in the state and the new data from server
-      this.setState({ data: [...this.state.data, ...serverResponds] });
-    });
+    if (this.intervalID) {
+      clearInterval(this.intervalID); // Clear any existing intervals
+    }
+
+    this.intervalID = window.setInterval(() => {
+      DataStreamer.getData((serverResponds: ServerRespond[]) => {
+        // Aggregate new data with existing data in a Map for efficient access
+        // Use stock symbol and timestamp as the key
+        const dataMap = new Map(this.state.data.map(item => 
+          [`${item.stock}-${item.timestamp.toString()}`, item]));
+
+        serverResponds.forEach((newDataPoint) => {
+          const compositeKey = `${newDataPoint.stock}-${newDataPoint.timestamp.toString()}`;
+          const existingDataPoint = dataMap.get(compositeKey);
+          if (existingDataPoint) {
+            // If a duplicate is found, aggregate the 'top_ask.price' and 'top_bid.price' by averaging
+            existingDataPoint.top_ask.price = 
+              (Number(existingDataPoint.top_ask.price) + Number(newDataPoint.top_ask.price)) / 2;
+            existingDataPoint.top_bid.price = 
+              (Number(existingDataPoint.top_bid.price) + Number(newDataPoint.top_bid.price)) / 2;
+          } else {
+            // If not a duplicate, add the new data point to the Map
+            dataMap.set(compositeKey, newDataPoint);
+          }
+        });
+        
+        // Convert the Map back to an array for the component's state
+        this.setState({
+          data: Array.from(dataMap.values()),
+          showGraph: true,
+        });
+      });
+    }, 100);
   }
 
-  /**
-   * Render the App react component
-   */
+  componentWillUnmount() {
+    // Clear the interval when the component is unmounted
+    if (this.intervalID) {
+      clearInterval(this.intervalID);
+    }
+  }
+
   render() {
+    // The rest of your render method
     return (
       <div className="App">
         <header className="App-header">
           Bank & Merge Co Task 2
         </header>
         <div className="App-content">
-          <button className="btn btn-primary Stream-button"
-            // when button is click, our react app tries to request
-            // new data from the server.
-            // As part of your task, update the getDataFromServer() function
-            // to keep requesting the data every 100ms until the app is closed
-            // or the server does not return anymore data.
-            onClick={() => {this.getDataFromServer()}}>
+          <button className="btn btn-primary Stream-button" onClick={() => {this.getDataFromServer()}}>
             Start Streaming Data
           </button>
           <div className="Graph">
@@ -67,7 +86,7 @@ class App extends Component<{}, IState> {
           </div>
         </div>
       </div>
-    )
+    );
   }
 }
 
